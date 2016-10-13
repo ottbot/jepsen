@@ -8,6 +8,8 @@
             [clojure.java.io :as io]))
 
 
+
+
 ;; Start consul
 ;; consul agent -server -bootstrap-expect 1 -data-dir /tmp/consul
 
@@ -15,38 +17,41 @@
   (partial c/exec "/tmp/jepsen-db-tasks"))
 
 
-(defn node-ip-addresses [test])
+(defn missing-command? [cmd]
+  (empty?
+    (c/exec :command :-v cmd c/| :cat)))
+
+
+(defn hashicorp-url [cmd version]
+  (let [cmd (name cmd)]
+    (str "https://releases.hashicorp.com/" cmd "/"
+         version "/" cmd "_" version "_linux_amd64.zip")))
+
+(defn install-hashicorp-tool [node cmd version]
+  (if (missing-command? cmd)
+    (do
+      (log/info node "installing" cmd version)
+      (c/exec :curl :-o :tmp.zip (hashicorp-url cmd version))
+      (c/exec :unzip :-o :tmp.zip)
+      (c/exec :rm :tmp.zip)
+      (c/exec :mv cmd (str "/usr/local/bin/" (name cmd))))
+    (log/info node cmd "already installed")))
+
+
 
 (defn db
   "Vault transit"
   [version]
   (reify db/DB
     (setup! [_ test node]
-
       (c/su
-        (c/exec :echo
-                (str
-                  (slurp (io/resource "tasks")))
-                :> "/tmp/jepsen-db-tasks")
+        (install-hashicorp-tool node :consul "0.7.0")
+        (install-hashicorp-tool node :vault version)
 
-        (c/exec :chmod :+x "/tmp/jepsen-db-tasks")
-
-        (log/info node "installing Vault" version)
-        (exec-task :install-vault version)
-
-        (log/info node "starting Consul")
-        (exec-task :install-consul)
-
-        (log/info node (:nodes test))
-        (exec-task :start-consul (count (:nodes test)))
-        ;; when node is :n1, join the servers. Looks up hostnames
         ))
 
     (teardown! [_ test node]
-      (log/info node "trearing down Consul")
-      (c/su
-        (exec-task :stop-consul))
-      (log/info node "tearing down Vault"))))
+      )))
 
 (defn vault-test
   [version]
